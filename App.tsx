@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -11,15 +11,27 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { supabase } from './lib/supabase';
 
 type InvestmentType = 'Residential' | 'Commercial' | 'Business';
 
 type Parcel = {
   id: string;
-  neighborhood: string;
-  area: string;
-  price: string;
-  score: number;
+  name: string;
+  location: string;
+  area_m2: number;
+  price_eur: number;
+  suitability_score: number;
+  is_demo: boolean;
+  created_at: string;
+};
+
+type InvestmentRequest = {
+  id: string;
+  investment_type: string;
+  location: string;
+  budget_eur: number;
+  created_at: string;
 };
 
 const INVESTMENT_TYPES: { name: InvestmentType; icon: string }[] = [
@@ -30,7 +42,7 @@ const INVESTMENT_TYPES: { name: InvestmentType; icon: string }[] = [
 
 const LOCATIONS = ['Mitrovica', 'Prishtina', 'Peja'];
 
-const DEMO_PARCELS: Parcel[] = [
+/*
   {
     id: 'DEMO PARCEL A',
     neighborhood: 'Example zone A',
@@ -54,6 +66,8 @@ const DEMO_PARCELS: Parcel[] = [
   },
 ];
 
+*/
+
 export default function App() {
   const [investmentType, setInvestmentType] =
     useState<InvestmentType>('Residential');
@@ -61,6 +75,109 @@ export default function App() {
   const [minimumArea, setMinimumArea] = useState('');
   const [maximumBudget, setMaximumBudget] = useState('');
   const [showResults, setShowResults] = useState(false);
+  const [requests, setRequests] = useState<InvestmentRequest[]>([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
+  const [requestsError, setRequestsError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [parcels, setParcels] = useState<Parcel[]>([]);
+  const [isLoadingParcels, setIsLoadingParcels] = useState(false);
+  const [parcelsError, setParcelsError] = useState<string | null>(null);
+
+  const fetchRequests = async () => {
+    setIsLoadingRequests(true);
+    setRequestsError(null);
+
+    const { data, error } = await supabase
+      .from('investment_requests')
+      .select('id, investment_type, location, budget_eur, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      setRequestsError(error.message);
+      setIsLoadingRequests(false);
+      return;
+    }
+
+    setRequests(data ?? []);
+    setIsLoadingRequests(false);
+  };
+
+  useEffect(() => {
+    void fetchRequests();
+  }, []);
+
+  const fetchParcels = async () => {
+    const minimumAreaValue = Number(minimumArea.trim());
+    const maximumBudgetValue = Number(maximumBudget.replace(/,/g, '').trim());
+
+    setIsLoadingParcels(true);
+    setParcelsError(null);
+
+    const { data, error } = await supabase
+      .from('parcels')
+      .select(
+        'id, name, location, area_m2, price_eur, suitability_score, is_demo, created_at'
+      )
+      .eq('location', location)
+      .gte('area_m2', minimumAreaValue)
+      .lte('price_eur', maximumBudgetValue)
+      .eq('is_demo', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      setParcelsError(error.message);
+      setIsLoadingParcels(false);
+      return;
+    }
+
+    setParcels(data ?? []);
+    setIsLoadingParcels(false);
+  };
+
+  const handleSaveRequest = async () => {
+    setFormMessage(null);
+    const normalizedMinimumArea = minimumArea.trim();
+    const normalizedBudget = maximumBudget.replace(/,/g, '').trim();
+    const area = Number(normalizedMinimumArea);
+    const budget = Number(normalizedBudget);
+
+    if (!investmentType || !location || !normalizedMinimumArea || !normalizedBudget) {
+      setFormMessage(
+        'Please select an investment type and location, and enter area and budget.'
+      );
+      return;
+    }
+
+    if (!Number.isInteger(area) || area <= 0) {
+      setFormMessage('Minimum area must be a positive whole number in m².');
+      return;
+    }
+
+    if (!Number.isInteger(budget) || budget <= 0) {
+      setFormMessage('Budget must be a positive whole number in euros.');
+      return;
+    }
+
+    setIsSaving(true);
+    const { error } = await supabase.from('investment_requests').insert({
+      investment_type: investmentType,
+      location,
+      budget_eur: budget,
+    });
+
+    setFormMessage(
+      error
+        ? `Could not save request: ${error.message}`
+        : 'Investment request saved successfully.'
+    );
+    setShowResults(true);
+    await fetchParcels();
+    setIsSaving(false);
+    if (!error) {
+      await fetchRequests();
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -211,18 +328,24 @@ export default function App() {
 
             <Pressable
               accessibilityRole="button"
-              onPress={() => setShowResults(true)}
+              disabled={isSaving}
+              onPress={() => void handleSaveRequest()}
               style={({ pressed }) => [
                 styles.findButton,
                 pressed && styles.findButtonPressed,
               ]}
             >
-              <Text style={styles.findButtonText}>Find Suitable Land</Text>
+              <Text style={styles.findButtonText}>
+                {isSaving ? 'Saving request...' : 'Save & Find Suitable Land'}
+              </Text>
               <Text style={styles.findButtonArrow}>→</Text>
             </Pressable>
             <Text style={styles.buttonNote}>
-              Explore illustrative parcel examples
+              The minimum area is used for the demo search and is not saved.
             </Text>
+            {formMessage && (
+              <Text style={styles.formMessage}>{formMessage}</Text>
+            )}
           </View>
 
           {showResults && (
@@ -230,7 +353,7 @@ export default function App() {
               <View style={styles.resultsHeadingRow}>
                 <View>
                   <Text style={styles.resultsEyebrow}>YOUR SEARCH</Text>
-                  <Text style={styles.resultsTitle}>Example parcels</Text>
+                  <Text style={styles.resultsTitle}>Available parcels</Text>
                 </View>
                 <View style={styles.demoBadge}>
                   <Text style={styles.demoBadgeText}>DEMO DATA</Text>
@@ -241,20 +364,46 @@ export default function App() {
                 {'\n'}These synthetic examples and scores are for demonstration
                 only, not verified investment assessments.
               </Text>
-              {DEMO_PARCELS.map((parcel) => (
+              <Text style={styles.resultsDescription}>
+                Filtered demo records loaded from Supabase. Suitability scores
+                are illustrative only and are not verified assessments.
+              </Text>
+              {isLoadingParcels && (
+                <Text style={styles.stateText}>Loading parcel results...</Text>
+              )}
+              {!isLoadingParcels && parcelsError && (
+                <View>
+                  <Text style={styles.errorText}>{parcelsError}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void fetchParcels()}
+                    style={styles.retryButton}
+                  >
+                    <Text style={styles.retryButtonText}>Try again</Text>
+                  </Pressable>
+                </View>
+              )}
+              {!isLoadingParcels && !parcelsError && parcels.length === 0 && (
+                <Text style={styles.stateText}>
+                  No demo parcels match these criteria.
+                </Text>
+              )}
+              {!isLoadingParcels && !parcelsError && parcels.map((parcel) => (
                 <View key={parcel.id} style={styles.parcelCard}>
                   <View style={styles.parcelTopRow}>
                     <View style={styles.parcelPin}>
                       <Text style={styles.parcelPinText}>⌖</Text>
                     </View>
                     <View style={styles.parcelIdentity}>
-                      <Text style={styles.parcelId}>{parcel.id}</Text>
+                      <Text style={styles.parcelId}>DEMO DATA · {parcel.name}</Text>
                       <Text style={styles.parcelLocation}>
-                        {parcel.neighborhood}, {location}
+                        {parcel.location}
                       </Text>
                     </View>
                     <View style={styles.demoScore}>
-                      <Text style={styles.demoScoreNumber}>{parcel.score}</Text>
+                      <Text style={styles.demoScoreNumber}>
+                        {parcel.suitability_score}
+                      </Text>
                       <Text style={styles.demoScoreLabel}>DEMO SCORE</Text>
                     </View>
                   </View>
@@ -262,18 +411,68 @@ export default function App() {
                   <View style={styles.parcelDetails}>
                     <View>
                       <Text style={styles.detailLabel}>AREA</Text>
-                      <Text style={styles.detailValue}>{parcel.area}</Text>
+                      <Text style={styles.detailValue}>
+                        {parcel.area_m2.toLocaleString()} m²
+                      </Text>
                     </View>
                     <View>
                       <Text style={styles.detailLabel}>ASKING PRICE</Text>
-                      <Text style={styles.detailValue}>{parcel.price}</Text>
+                      <Text style={styles.detailValue}>
+                        €{parcel.price_eur.toLocaleString()}
+                      </Text>
                     </View>
-                    <Text style={styles.scoreDisclaimer}>Illustrative only</Text>
+                    <Text style={styles.scoreDisclaimer}>
+                      Score is illustrative only
+                    </Text>
                   </View>
                 </View>
               ))}
             </View>
           )}
+
+          <View style={styles.requestsSection}>
+            <View style={styles.resultsHeadingRow}>
+              <View>
+                <Text style={styles.resultsEyebrow}>SAVED REQUESTS</Text>
+                <Text style={styles.resultsTitle}>Investment requests</Text>
+              </View>
+            </View>
+            {isLoadingRequests && (
+              <Text style={styles.stateText}>Loading saved requests...</Text>
+            )}
+            {!isLoadingRequests && requestsError && (
+              <View>
+                <Text style={styles.errorText}>{requestsError}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void fetchRequests()}
+                  style={styles.retryButton}
+                >
+                  <Text style={styles.retryButtonText}>Try again</Text>
+                </Pressable>
+              </View>
+            )}
+            {!isLoadingRequests && !requestsError && requests.length === 0 && (
+              <Text style={styles.stateText}>No saved requests yet.</Text>
+            )}
+            {!isLoadingRequests && !requestsError && requests.length > 0 &&
+              requests.map((request) => (
+                <View key={request.id} style={styles.requestCard}>
+                  <View style={styles.requestCardHeader}>
+                    <Text style={styles.requestType}>
+                      {request.investment_type}
+                    </Text>
+                    <Text style={styles.requestDate}>
+                      {new Date(request.created_at).toLocaleDateString()}
+                    </Text>
+                  </View>
+                  <Text style={styles.requestLocation}>{request.location}</Text>
+                  <Text style={styles.requestBudget}>
+                    Budget: €{request.budget_eur.toLocaleString()}
+                  </Text>
+                </View>
+              ))}
+          </View>
 
           <View style={styles.disclaimer}>
             <Text style={styles.disclaimerMark}>i</Text>
@@ -589,6 +788,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 10,
   },
+  formMessage: {
+    color: COLORS.green,
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 10,
+  },
   resultsSection: {
     marginTop: 27,
   },
@@ -712,6 +918,65 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 9,
     fontStyle: 'italic',
+  },
+  requestsSection: {
+    marginTop: 27,
+  },
+  stateText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  errorText: {
+    color: '#B34747',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: COLORS.blueSoft,
+  },
+  retryButtonText: {
+    color: COLORS.blueDark,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  requestCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#EDF1F5',
+    padding: 14,
+    marginBottom: 9,
+  },
+  requestCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  requestType: {
+    color: COLORS.navy,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  requestDate: {
+    color: COLORS.muted,
+    fontSize: 10,
+  },
+  requestLocation: {
+    color: COLORS.text,
+    fontSize: 12,
+    marginTop: 7,
+  },
+  requestBudget: {
+    color: COLORS.green,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 5,
   },
   disclaimer: {
     flexDirection: 'row',
