@@ -1,3 +1,5 @@
+import type { Session } from '@supabase/supabase-js';
+import AuthScreen from './src/components/AuthScreen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import {
@@ -68,7 +70,7 @@ const LOCATIONS = ['Mitrovica', 'Prishtina', 'Peja'];
 
 */
 
-export default function App() {
+function InvestmentApp() {
   const [investmentType, setInvestmentType] =
     useState<InvestmentType>('Residential');
   const [location, setLocation] = useState('Mitrovica');
@@ -191,7 +193,21 @@ export default function App() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.brandRow}>
+          
+          <Pressable
+              accessibilityRole="button"
+              onPress={async () => {
+                const { error } = await supabase.auth.signOut();
+
+                if (error) {
+                  setFormMessage(`Logout failed: ${error.message}`);
+                }
+              }}
+              style={styles.logoutButton}
+            >
+              <Text style={styles.logoutText}>Log out</Text>
+            </Pressable>
+            <View style={styles.brandRow}>
             <View style={styles.brandMark}>
               <View style={styles.brandMarkInner} />
             </View>
@@ -503,6 +519,18 @@ const COLORS = {
 };
 
 const styles = StyleSheet.create({
+  logoutButton: {
+  alignSelf: 'flex-end',
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  marginBottom: 12,
+},
+
+logoutText: {
+  color: '#B34747',
+  fontSize: 13,
+  fontWeight: '700',
+},
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -1004,3 +1032,53 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 });
+
+export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loadingSession, setLoadingSession] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) {
+        setSession(data.session);
+        setLoadingSession(false);
+      }
+    }).catch(() => {
+      if (mounted) {
+        setLoadingSession(false);
+      }
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        if (mounted) {
+          setSession(nextSession);
+          setLoadingSession(false);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  if (loadingSession) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <Text style={{ textAlign: 'center', marginTop: 60 }}>
+          Checking session...
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  return <InvestmentApp key={session.user.id} />;
+}
