@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { supabase } from './lib/supabase';
+import { supabase } from "./src/lib/supabase";
 
 type InvestmentType = 'Residential' | 'Commercial' | 'Business';
 
